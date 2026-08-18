@@ -27,7 +27,12 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'User with this email already exists' });
     }
 
-    const assignedRole = role === 'supervisor' ? 'supervisor' : 'trainee';
+    let assignedRole;
+    if (role === 'supervisor') {
+      assignedRole = 'supervisor';
+    }
+    // Allow the store to assign 'admin' if it's the first user, otherwise default to trainee
+    
     const user = await dbStore.createUser({ name, email, password, role: assignedRole });
 
     if (user) {

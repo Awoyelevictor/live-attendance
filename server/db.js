@@ -86,6 +86,22 @@ const connectDB = async () => {
       console.log('✅ [MongoDB Atlas] Default office location created.');
     }
 
+    // Seed default admin account
+    const { default: User } = await import('./models/User.js');
+    const adminExists = await User.findOne({ email: 'admin@example.com' });
+    if (!adminExists) {
+      console.log('🌱 [MongoDB Atlas] Initializing default admin account...');
+      await User.create({
+        name: 'Admin User',
+        email: 'admin@example.com',
+        password: 'admin123', // hook will hash it automatically
+        role: 'admin',
+        employeeId: 'ADM-001',
+        department: 'Management'
+      });
+      console.log('✅ [MongoDB Atlas] Default admin account created (admin@example.com / admin123).');
+    }
+
     return true;
   } catch (error) {
     isConnecting = false;
