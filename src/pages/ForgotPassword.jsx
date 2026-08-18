@@ -407,59 +407,8 @@ export default function ForgotPassword() {
                 </div>
               </div>
 
-              {/* Live Sandbox & Delivery Preview Panel */}
+              {/* Delivery Guide Panel */}
               <div className="border border-slate-800 bg-slate-950/60 rounded-2xl p-4 sm:p-5 overflow-hidden">
-                {/* Instant Sandbox Helper */}
-                {sandboxOtp && (
-                  <div className="mb-4 p-3.5 bg-indigo-950/80 border border-indigo-500/40 rounded-xl flex items-center justify-between shadow-lg">
-                    <div>
-                      <div className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
-                        <Sparkles size={13} className="text-amber-400" />
-                        <span>Generated Verification OTP</span>
-                      </div>
-                      <div className="text-2xl font-mono font-extrabold text-white tracking-widest mt-0.5">
-                        {sandboxOtp}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleApplySandboxOtp(sandboxOtp)}
-                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow"
-                    >
-                      {copiedOtp ? (
-                        <>
-                          <Check size={14} className="text-emerald-300" />
-                          <span>Pasted!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy size={14} />
-                          <span>Fill Code</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )}
-
-                {/* Ethereal Test Mailbox Link if available */}
-                {previewUrl && (
-                  <div className="mb-4 p-3 bg-purple-950/60 border border-purple-500/30 rounded-xl flex items-center justify-between text-xs text-purple-200">
-                    <div className="flex items-center gap-2">
-                      <Mail size={15} className="text-purple-400" />
-                      <span>Delivered to test inbox</span>
-                    </div>
-                    <a
-                      href={previewUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-purple-300 hover:text-white font-bold underline"
-                    >
-                      <span>View Email</span>
-                      <ExternalLink size={12} />
-                    </a>
-                  </div>
-                )}
-
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2 text-white font-semibold text-sm">
                     <Inbox size={16} className="text-indigo-400" />
