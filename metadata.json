@@ -1,0 +1,6 @@
+{
+  "name": "Attendance Management System",
+  "description": "Full-stack attendance management system for admins and workers with GPS check-in, real-time stats, and reporting.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
