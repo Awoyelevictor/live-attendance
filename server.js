@@ -6,7 +6,7 @@ import { createRequire } from 'module';
 import { createServer as createViteServer } from 'vite';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import connectDB from './server/db.js';
+import connectDB, { getDbStatus } from './server/db.js';
 import authRoutes from './server/routes/auth.js';
 import adminRoutes from './server/routes/admin.js';
 import workerRoutes from './server/routes/worker.js';
@@ -20,13 +20,13 @@ const archiver = require('archiver');
 // Load env vars
 dotenv.config();
 
-// Connect to MongoDB
-connectDB();
-
-// Start background jobs
-startReminderJob();
-
 async function startServer() {
+  // Connect to MongoDB Atlas
+  await connectDB();
+
+  // Start background jobs
+  startReminderJob();
+
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
@@ -44,7 +44,13 @@ async function startServer() {
 
   // Health check endpoint for cloud platforms & deployment monitors
   app.get('/api/health', (req, res) => {
-    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+    const dbStatus = getDbStatus();
+    res.status(200).json({ 
+      status: 'ok', 
+      uptime: process.uptime(), 
+      timestamp: new Date().toISOString(),
+      database: dbStatus
+    });
   });
 
   // Direct source code download endpoint
