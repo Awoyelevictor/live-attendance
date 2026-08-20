@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import { io } from 'socket.io-client';
-import { 
+import CustomAudioPlayer from '../components/CustomAudioPlayer';
+import TicTacToe from '../components/TicTacToe';
+import { Share,  Mic, Square, Trash2,  
   Search, 
   Send, 
   Paperclip, 
@@ -36,7 +38,23 @@ export default function Messages() {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'admins', 'workers'
   const [isBroadcast, setIsBroadcast] = useState(false);
+  const [chatEnabled, setChatEnabled] = useState(true);
   
+  // Voice Recording states
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const timerIntervalRef = useRef(null);
+  
+  // Message Context Menu (Long press)
+  const [contextMenu, setContextMenu] = useState(null);
+  const [forwardingMessage, setForwardingMessage] = useState(null);
+  const longPressTimeoutRef = useRef(null);
+  
+  // Secret command states
+  const [showSecretGame, setShowSecretGame] = useState(false);
+
   // Real-time socket states
   const [socket, setSocket] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState([]);
@@ -51,6 +69,7 @@ export default function Messages() {
 
   useEffect(() => {
     fetchPartners();
+    api.get('/messages/settings/status').then(res => setChatEnabled(res.data.chatEnabled)).catch(() => {});
     const interval = setInterval(() => {
       if (selectedPartner || isBroadcast) {
         fetchMessages();
@@ -343,6 +362,14 @@ export default function Messages() {
     const textToSend = customText !== null ? customText : newMessage;
     if ((!textToSend.trim() && !mediaPreview) || (!selectedPartner && !isBroadcast)) return;
 
+    if (textToSend.trim().toLowerCase() === '/game') {
+      setShowSecretGame(true);
+      if (customText === null) {
+        setNewMessage('');
+      }
+      return;
+    }
+
     if (socket && selectedPartner && !isBroadcast) {
       socket.emit('stop_typing', { senderId: user._id, receiverId: selectedPartner._id });
     }
@@ -370,6 +397,102 @@ export default function Messages() {
     } finally {
       setSending(false);
     }
+  };
+
+  const toggleChatEnabled = async () => {
+    try {
+      const res = await api.put('/messages/settings/status', { chatEnabled: !chatEnabled });
+      setChatEnabled(res.data.chatEnabled);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      
+      mediaRecorderRef.current.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = () => {
+          setMediaPreview(reader.result);
+        };
+        stream.getTracks().forEach(t => t.stop());
+      };
+      
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Mic access denied', err);
+      alert('Microphone access is required to send voice notes.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      clearInterval(timerIntervalRef.current);
+    }
+  };
+
+  const deleteMessage = async (id) => {
+    try {
+      await api.delete(`/messages/${id}`);
+      setMessages(messages.filter(m => m._id !== id));
+      refreshThreadPreviews();
+      setContextMenu(null);
+    } catch (err) {
+      console.error('Failed to delete message', err);
+    }
+  };
+
+  const handleTouchStart = (e, msg) => {
+    longPressTimeoutRef.current = setTimeout(() => {
+      setContextMenu({
+        messageId: msg._id,
+        isMine: msg.sender?._id === user._id || msg.sender === user._id,
+        x: e.touches ? e.touches[0].clientX : e.clientX,
+        y: e.touches ? e.touches[0].clientY : e.clientY,
+        msg
+      });
+    }, 600); // 600ms for long press
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+    }
+  };
+
+  const forwardMessage = (partner) => {
+    if (!forwardingMessage) return;
+    
+    api.post('/messages', {
+      receiver: partner._id,
+      text: forwardingMessage.text,
+      mediaUrl: forwardingMessage.mediaUrl,
+      isBroadcast: false
+    }).then(res => {
+      if (socket) socket.emit('send_message', res.data);
+      setForwardingMessage(null);
+      refreshThreadPreviews();
+      alert(`Message forwarded to ${partner.name}`);
+    }).catch(err => {
+      console.error('Failed to forward', err);
+    });
   };
 
   // Filter partners by tab choice & search query
@@ -608,22 +731,38 @@ export default function Messages() {
                 )}
               </div>
 
-              {/* Test Notification Action */}
-              <button
-                onClick={async () => {
-                  try {
-                    await sendTestNotification();
-                    alert('Test notification sent successfully!');
-                  } catch (e) {
-                    alert(e.response?.data?.message || 'Failed to send test push. Please allow notifications in your browser first.');
-                  }
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 text-xs font-medium transition-colors shrink-0"
-                title="Send a test push notification to this device"
-              >
-                <Bell size={13} />
-                <span className="hidden sm:inline">Test Notification</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {user?.role === 'admin' && (
+                  <button
+                    onClick={toggleChatEnabled}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors shrink-0 ${
+                      chatEnabled 
+                        ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/20'
+                        : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20'
+                    }`}
+                    title="Toggle Chat for all non-admin users"
+                  >
+                    <Shield size={13} />
+                    <span className="hidden sm:inline">{chatEnabled ? 'Chat Enabled' : 'Chat Disabled'}</span>
+                  </button>
+                )}
+                {/* Test Notification Action */}
+                <button
+                  onClick={async () => {
+                    try {
+                      await sendTestNotification();
+                      alert('Test notification sent successfully!');
+                    } catch (e) {
+                      alert(e.response?.data?.message || 'Failed to send test push. Please allow notifications in your browser first.');
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 text-xs font-medium transition-colors shrink-0"
+                  title="Send a test push notification to this device"
+                >
+                  <Bell size={13} />
+                  <span className="hidden sm:inline">Test Notification</span>
+                </button>
+              </div>
             </div>
 
             {/* Message Bubble Feed */}
@@ -640,7 +779,7 @@ export default function Messages() {
                 </div>
               ) : (
                 messages.map((msg, idx) => {
-                  const isMine = msg.sender?._id === user._id;
+                  const isMine = msg.sender?._id === user._id || msg.sender === user._id;
                   return (
                     <motion.div
                       initial={{ opacity: 0, y: 12 }}
@@ -649,11 +788,29 @@ export default function Messages() {
                       key={msg._id || idx}
                       className={`flex flex-col max-w-[70%] ${isMine ? 'self-end items-end' : 'self-start items-start'}`}
                     >
-                      <div className={`px-4 py-2.5 rounded-2xl ${
-                        isMine 
-                          ? (isBroadcast ? 'bg-rose-600 text-white rounded-br-sm' : 'bg-indigo-600 text-slate-100 rounded-br-sm') 
-                          : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/50'
-                      }`}>
+                      <div 
+                        className={`px-4 py-2.5 rounded-2xl relative group cursor-pointer ${
+                          isMine 
+                            ? (isBroadcast ? 'bg-rose-600 text-white rounded-br-sm' : 'bg-indigo-600 text-slate-100 rounded-br-sm') 
+                            : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/50'
+                        }`}
+                        onTouchStart={(e) => handleTouchStart(e, msg)}
+                        onTouchEnd={handleTouchEnd}
+                        onTouchMove={handleTouchEnd}
+                        onMouseDown={(e) => handleTouchStart(e, msg)}
+                        onMouseUp={handleTouchEnd}
+                        onMouseLeave={handleTouchEnd}
+                        onContextMenu={(e) => { e.preventDefault(); handleTouchStart(e, msg); }}
+                      >
+                        {(isMine || user?.role === 'admin') && (
+                          <button
+                            onClick={() => deleteMessage(msg._id)}
+                            className={`absolute top-1/2 -translate-y-1/2 ${isMine ? '-left-8' : '-right-8'} opacity-0 group-hover:opacity-100 p-1.5 rounded-full bg-slate-800 text-rose-400 hover:bg-rose-500/10 transition-all border border-slate-700`}
+                            title="Delete message"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
                         
                         {/* Sender Label for Received Broadcasts */}
                         {!isMine && isBroadcast && (
@@ -662,22 +819,28 @@ export default function Messages() {
                           </p>
                         )}
 
-                        {/* Image attachment rendering */}
+                        {/* Image/Audio attachment rendering */}
                         {msg.mediaUrl && (
-                          <div className="mb-2 max-w-sm rounded-lg overflow-hidden border border-slate-900 shadow-sm">
-                            <img 
-                              src={msg.mediaUrl} 
-                              alt="Attached Media" 
-                              className="w-full max-h-48 object-cover cursor-pointer hover:brightness-95 transition-all" 
-                              onClick={() => window.open(msg.mediaUrl)}
-                              referrerPolicy="no-referrer"
-                            />
+                          <div className="mb-2 max-w-sm rounded-lg overflow-hidden border border-slate-900 shadow-sm bg-slate-950/50">
+                            {msg.mediaUrl.startsWith('data:audio') ? (
+                              <CustomAudioPlayer src={msg.mediaUrl} isMine={isMine} />
+                            ) : (
+                              <img 
+                                src={msg.mediaUrl} 
+                                alt="Attached Media" 
+                                className="w-full max-h-48 object-cover cursor-pointer hover:brightness-95 transition-all" 
+                                onClick={() => window.open(msg.mediaUrl)}
+                                referrerPolicy="no-referrer"
+                              />
+                            )}
                           </div>
                         )}
 
-                        <p className="text-xs whitespace-pre-wrap leading-relaxed">
-                          {msg.text}
-                        </p>
+                        {msg.text && (
+                          <p className="text-xs whitespace-pre-wrap leading-relaxed">
+                            {msg.text}
+                          </p>
+                        )}
                       </div>
                       
                       <div className="flex items-center gap-1 mt-1 px-1 text-[9px] text-slate-500">
@@ -743,7 +906,11 @@ export default function Messages() {
                     exit={{ opacity: 0, scale: 0.95 }}
                     className="relative inline-block border border-slate-700 p-1.5 bg-slate-900 rounded-xl"
                   >
-                    <img src={mediaPreview} alt="Pending attachment" className="h-16 rounded-lg object-cover border border-slate-800" referrerPolicy="no-referrer" />
+                    {mediaPreview.startsWith('data:audio') ? (
+                      <CustomAudioPlayer src={mediaPreview} isMine={true} />
+                    ) : (
+                      <img src={mediaPreview} alt="Pending attachment" className="h-16 rounded-lg object-cover border border-slate-800" referrerPolicy="no-referrer" />
+                    )}
                     <button 
                       onClick={removeMedia} 
                       className="absolute -top-1.5 -right-1.5 bg-slate-800 text-slate-300 p-1 rounded-full hover:bg-rose-600 transition-all border border-slate-700"
@@ -755,52 +922,88 @@ export default function Messages() {
               </AnimatePresence>
 
               {/* Core Chat Composer Form */}
-              <form onSubmit={(e) => sendMessage(e)} className="flex items-end gap-2.5">
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  onChange={handleFileChange} 
-                  accept="image/*" 
-                  className="hidden" 
-                />
-                
-                <button 
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-xl transition-all shrink-0 border border-slate-800 bg-slate-950/20"
-                  title="Attach file image"
-                >
-                  <Paperclip size={18} />
-                </button>
+              {!chatEnabled && user?.role !== 'admin' ? (
+                <div className="flex items-center justify-center p-4 bg-slate-900 border border-slate-800 rounded-xl text-slate-400 text-xs font-medium">
+                  Chat has been disabled by administrators.
+                </div>
+              ) : (
+                <form onSubmit={(e) => sendMessage(e)} className="flex items-end gap-2.5">
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileChange} 
+                    accept="image/*,audio/*" 
+                    className="hidden" 
+                  />
+                  
+                  {isRecording ? (
+                    <div className="flex-1 flex items-center gap-3 bg-rose-500/10 border border-rose-500/20 rounded-xl py-2.5 px-4 text-rose-400">
+                      <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                      <span className="text-xs font-bold tracking-wider font-mono">
+                        00:{recordingTime.toString().padStart(2, '0')}
+                      </span>
+                      <span className="text-[10px] uppercase font-bold text-rose-500/50 flex-1 text-center">Recording Audio...</span>
+                      <button 
+                        type="button" 
+                        onClick={stopRecording}
+                        className="bg-rose-500 hover:bg-rose-600 text-white p-1.5 rounded-lg transition-colors shadow-lg"
+                      >
+                        <Square size={14} fill="currentColor" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <button 
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-xl transition-all shrink-0 border border-slate-800 bg-slate-950/20"
+                        title="Attach file"
+                      >
+                        <Paperclip size={18} />
+                      </button>
 
-                <textarea
-                  value={newMessage}
-                  onChange={handleTyping}
-                  placeholder={isBroadcast ? "Compose high-priority broadcast announcement..." : "Type your secure message..."}
-                  className="flex-1 bg-slate-950/40 border border-slate-800 rounded-xl py-3 px-4 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 resize-none max-h-32"
-                  rows={1}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      sendMessage(e);
-                    }
-                  }}
-                />
+                      <textarea
+                        value={newMessage}
+                        onChange={handleTyping}
+                        placeholder={isBroadcast ? "Compose high-priority broadcast announcement..." : "Type your secure message..."}
+                        className="flex-1 bg-slate-950/40 border border-slate-800 rounded-xl py-3 px-4 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 resize-none max-h-32"
+                        rows={1}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            sendMessage(e);
+                          }
+                        }}
+                      />
 
-                <button 
-                  type="submit"
-                  disabled={sending || (!newMessage.trim() && !mediaPreview)}
-                  className={`p-3 rounded-xl shrink-0 transition-all flex items-center justify-center ${
-                    sending || (!newMessage.trim() && !mediaPreview) 
-                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-800' 
-                      : (isBroadcast 
-                          ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/10' 
-                          : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/10')
-                  }`}
-                >
-                  {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-                </button>
-              </form>
+                      {!newMessage.trim() && !mediaPreview ? (
+                        <button 
+                          type="button"
+                          onClick={startRecording}
+                          className="p-3 rounded-xl shrink-0 transition-all flex items-center justify-center bg-slate-800 text-slate-300 hover:text-indigo-400 border border-slate-700"
+                          title="Record voice note"
+                        >
+                          <Mic size={18} />
+                        </button>
+                      ) : (
+                        <button 
+                          type="submit"
+                          disabled={sending}
+                          className={`p-3 rounded-xl shrink-0 transition-all flex items-center justify-center ${
+                            sending 
+                              ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-800' 
+                              : (isBroadcast 
+                                  ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/10' 
+                                  : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/10')
+                          }`}
+                        >
+                          {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </form>
+              )}
             </div>
           </>
         ) : (
@@ -816,6 +1019,112 @@ export default function Messages() {
           </div>
         )}
       </div>
+      {/* Context Menu / Forwarding Dialog */}
+      <AnimatePresence>
+        {contextMenu && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm"
+            onClick={() => setContextMenu(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="absolute bg-slate-900 border border-slate-700 shadow-2xl rounded-xl py-2 min-w-48 overflow-hidden"
+              style={{
+                top: Math.min(contextMenu.y, window.innerHeight - 150),
+                left: Math.min(contextMenu.x, window.innerWidth - 200)
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => {
+                  setForwardingMessage(contextMenu.msg);
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-4 py-2.5 text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-2 transition-colors"
+              >
+                <Share size={14} className="text-slate-400" />
+                Forward Message
+              </button>
+              
+              {(contextMenu.isMine || user?.role === 'admin') && (
+                <button
+                  onClick={() => deleteMessage(contextMenu.messageId)}
+                  className="w-full text-left px-4 py-2.5 text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-2 transition-colors border-t border-slate-800 mt-1 pt-3"
+                >
+                  <Trash2 size={14} />
+                  Delete Message
+                </button>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+
+        {forwardingMessage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setForwardingMessage(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-slate-200">Forward Message</h3>
+                <button onClick={() => setForwardingMessage(null)} className="text-slate-500 hover:text-slate-300">
+                  <X size={18} />
+                </button>
+              </div>
+              
+              <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 mb-6">
+                <p className="text-xs text-slate-300 italic line-clamp-3">
+                  "{forwardingMessage.text || 'Media Attachment'}"
+                </p>
+              </div>
+              
+              <h4 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wider">Select Recipient</h4>
+              <div className="max-h-64 overflow-y-auto custom-scrollbar space-y-1 pr-2">
+                {partners.map(p => (
+                  <button
+                    key={p._id}
+                    onClick={() => forwardMessage(p)}
+                    className="w-full flex items-center gap-3 p-2 hover:bg-slate-800 rounded-xl transition-colors text-left group"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 overflow-hidden shrink-0">
+                      {p.avatar ? (
+                        <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-slate-300">
+                          {(p.name?.[0] || 'U').toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-slate-200 truncate group-hover:text-indigo-300 transition-colors">{p.name}</p>
+                      <p className="text-[10px] text-slate-500 capitalize">{p.role}</p>
+                    </div>
+                    <Share size={14} className="text-slate-600 group-hover:text-indigo-400 transition-colors" />
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {showSecretGame && (
+          <TicTacToe onClose={() => setShowSecretGame(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

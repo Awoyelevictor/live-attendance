@@ -31,6 +31,46 @@ router.get('/threads/previews', async (req, res) => {
   }
 });
 
+// @desc    Get chat setting status
+// @route   GET /api/messages/settings/status
+router.get('/settings/status', async (req, res) => {
+  try {
+    const chatEnabled = await dbStore.getSetting('chatEnabled', true);
+    res.json({ chatEnabled });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// @desc    Toggle chat setting (admin only)
+// @route   PUT /api/messages/settings/status
+router.put('/settings/status', async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    const { chatEnabled } = req.body;
+    await dbStore.setSetting('chatEnabled', Boolean(chatEnabled));
+    res.json({ chatEnabled: Boolean(chatEnabled) });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// @desc    Delete a message
+// @route   DELETE /api/messages/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    const success = await dbStore.deleteMessage(req.params.id, req.user._id, req.user.role);
+    if (!success) {
+      return res.status(404).json({ message: 'Message not found or unauthorized' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // @desc    Get messages between current user and another user
 // @route   GET /api/messages/:otherUserId
 router.get('/:otherUserId', async (req, res) => {
@@ -59,6 +99,14 @@ router.post('/', async (req, res) => {
   try {
     const { receiver, text, mediaUrl, isBroadcast } = req.body;
     
+    // Check global chat setting
+    if (req.user.role !== 'admin') {
+      const chatEnabled = await dbStore.getSetting('chatEnabled', true);
+      if (!chatEnabled) {
+        return res.status(403).json({ message: 'Chat is currently disabled by administrators' });
+      }
+    }
+
     // Validate broadcast
     if (isBroadcast && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Only admins can broadcast' });

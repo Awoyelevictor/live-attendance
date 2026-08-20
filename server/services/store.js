@@ -605,7 +605,66 @@ export const dbStore = {
     };
   },
 
+  // --- SETTINGS METHODS ---
+  async getSetting(key, defaultValue = null) {
+    if (isDbConnected()) {
+      const doc = await SystemSettings.findOne({ key });
+      return doc ? doc.value : defaultValue;
+    }
+    // Simple in-memory fallback since no global memory struct exists for settings yet
+    if (!global.inMemorySettings) global.inMemorySettings = {};
+    return global.inMemorySettings[key] !== undefined ? global.inMemorySettings[key] : defaultValue;
+  },
+
+  async setSetting(key, value) {
+    if (isDbConnected()) {
+      await SystemSettings.findOneAndUpdate(
+        { key },
+        { value },
+        { upsert: true, new: true }
+      );
+      return true;
+    }
+    if (!global.inMemorySettings) global.inMemorySettings = {};
+    global.inMemorySettings[key] = value;
+    return true;
+  },
+
   // --- MESSAGE METHODS ---
+  async deleteMessage(messageId, userId, userRole) {
+    const checkInMemory = () => {
+      const idx = inMemoryMessages.findIndex(m => m._id === messageId);
+      if (idx === -1) return false;
+      const msg = inMemoryMessages[idx];
+      const senderId = msg.sender?._id ? msg.sender._id.toString() : msg.sender?.toString();
+      const currentUserId = userId?._id ? userId._id.toString() : userId?.toString();
+      if (userRole === 'admin' || senderId === currentUserId) {
+        inMemoryMessages.splice(idx, 1);
+        return true;
+      }
+      return false;
+    };
+
+    if (isDbConnected()) {
+      if (!/^[0-9a-fA-F]{24}$/.test(messageId)) {
+        return checkInMemory();
+      }
+      const msg = await Message.findById(messageId);
+      if (!msg) return false;
+      
+      const senderId = msg.sender?._id ? msg.sender._id.toString() : msg.sender?.toString();
+      const currentUserId = userId?._id ? userId._id.toString() : userId?.toString();
+      
+      if (userRole === 'admin' || senderId === currentUserId) {
+        await Message.findByIdAndDelete(messageId);
+        return true;
+      }
+      return false;
+    }
+    
+    return checkInMemory();
+  },
+
   async getThreadPreviews(userId) {
     let allMsgs = [];
     if (isDbConnected()) {
