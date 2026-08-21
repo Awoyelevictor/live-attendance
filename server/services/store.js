@@ -665,9 +665,20 @@ export const dbStore = {
     return checkInMemory();
   },
 
+  async getMessage(messageId) {
+    if (isDbConnected()) {
+      if (!/^[0-9a-fA-F]{24}$/.test(messageId)) {
+        return inMemoryMessages.find(m => m._id === messageId) || null;
+      }
+      return await Message.findById(messageId).populate('sender', 'name avatar role');
+    }
+    return inMemoryMessages.find(m => m._id === messageId) || null;
+  },
+
   async getThreadPreviews(userId) {
     let allMsgs = [];
-    if (isDbConnected()) {
+    const isValidUser = /^[0-9a-fA-F]{24}$/.test(userId);
+    if (isDbConnected() && isValidUser) {
       allMsgs = await Message.find({
         $or: [{ isBroadcast: true }, { sender: userId }, { receiver: userId }]
       }).sort({ createdAt: 1 }).lean();
@@ -709,25 +720,21 @@ export const dbStore = {
   },
 
   async getMessages(userId, otherUserId) {
-    if (isDbConnected()) {
+    const isValidUser = /^[0-9a-fA-F]{24}$/.test(userId);
+    const isValidOther = /^[0-9a-fA-F]{24}$/.test(otherUserId);
+
+    if (isDbConnected() && isValidUser && (otherUserId === 'broadcast' || isValidOther)) {
       if (otherUserId === 'broadcast') {
         return await Message.find({ isBroadcast: true })
           .populate('sender', 'name avatar role')
           .sort({ createdAt: 1 });
       }
 
-      const conditions = [{ isBroadcast: true }];
-      const isValidUser = /^[0-9a-fA-F]{24}$/.test(userId);
-      const isValidOther = /^[0-9a-fA-F]{24}$/.test(otherUserId);
-
-      if (isValidUser && isValidOther) {
-        conditions.push({ sender: userId, receiver: otherUserId });
-        conditions.push({ sender: otherUserId, receiver: userId });
-      } else if (!isValidOther) {
-        // Fallback or in-memory mix
-        conditions.push({ sender: userId, receiver: otherUserId });
-        conditions.push({ sender: otherUserId, receiver: userId });
-      }
+      const conditions = [
+        { isBroadcast: true },
+        { sender: userId, receiver: otherUserId },
+        { sender: otherUserId, receiver: userId }
+      ];
 
       return await Message.find({
         $or: conditions
@@ -768,14 +775,52 @@ export const dbStore = {
     return { ...newMessage, sender: { _id: sender._id, name: sender.name, avatar: sender.avatar, role: sender.role } };
   },
 
-  async markMessagesAsRead(userId, senderId) {
+  async updateMessage(messageId, userId, data) {
     if (isDbConnected()) {
+      if (!/^[0-9a-fA-F]{24}$/.test(messageId)) return null;
+      const msg = await Message.findById(messageId);
+      if (!msg) return null;
+      
+      const isGame = (msg.text && (msg.text.startsWith('{"type":"ludo"') || msg.text.startsWith('{"type":"tictactoe"') || msg.text.startsWith('{"type":"ludo_invite"'))) ||
+                     (data.text && (data.text.startsWith('{"type":"ludo"') || data.text.startsWith('{"type":"tictactoe"') || data.text.startsWith('{"type":"ludo_invite"')));
+
+      const isSender = msg.sender.toString() === userId.toString();
+      const isReceiver = msg.receiver && msg.receiver.toString() === userId.toString();
+      if (!isSender && !isReceiver && !isGame) return null;
+
+      Object.assign(msg, data);
+      await msg.save();
+      return await Message.findById(msg._id).populate('sender', 'name avatar role');
+    }
+
+    const idx = inMemoryMessages.findIndex(m => m._id === messageId);
+    if (idx === -1) return null;
+    const msg = inMemoryMessages[idx];
+    
+    const isGame = (msg.text && (msg.text.startsWith('{"type":"ludo"') || msg.text.startsWith('{"type":"tictactoe"') || msg.text.startsWith('{"type":"ludo_invite"'))) ||
+                   (data.text && (data.text.startsWith('{"type":"ludo"') || data.text.startsWith('{"type":"tictactoe"') || data.text.startsWith('{"type":"ludo_invite"')));
+
+    const isSender = msg.sender === userId;
+    const isReceiver = msg.receiver === userId;
+    if (!isSender && !isReceiver && !isGame) return null;
+
+    Object.assign(msg, data);
+    const sender = inMemoryUsers.find(u => u._id === msg.sender) || {};
+    return { ...msg, sender: { _id: sender._id, name: sender.name, avatar: sender.avatar, role: sender.role } };
+  },
+
+  async markMessagesAsRead(userId, senderId) {
+    const isValidUser = /^[0-9a-fA-F]{24}$/.test(userId);
+    const isValidSender = /^[0-9a-fA-F]{24}$/.test(senderId);
+
+    if (isDbConnected() && isValidUser && isValidSender) {
       await Message.updateMany(
         { receiver: userId, sender: senderId, read: false },
         { $set: { read: true } }
       );
       return true;
     }
+    
     inMemoryMessages.forEach(m => {
       if (m.receiver === userId && m.sender === senderId && !m.read) {
         m.read = true;

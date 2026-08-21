@@ -71,6 +71,35 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// @desc    Update a message
+// @route   PUT /api/messages/:id
+router.put('/:id', async (req, res) => {
+  try {
+    const { text, mediaUrl } = req.body;
+    const message = await dbStore.updateMessage(req.params.id, req.user._id, { text, mediaUrl });
+    if (!message) {
+      return res.status(404).json({ message: 'Message not found or unauthorized' });
+    }
+    res.json(message);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// @desc    Get single message details
+// @route   GET /api/messages/detail/:id
+router.get('/detail/:id', async (req, res) => {
+  try {
+    const message = await dbStore.getMessage(req.params.id);
+    if (!message) {
+      return res.status(404).json({ message: 'Message not found' });
+    }
+    res.json(message);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // @desc    Get messages between current user and another user
 // @route   GET /api/messages/:otherUserId
 router.get('/:otherUserId', async (req, res) => {

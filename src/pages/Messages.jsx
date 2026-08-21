@@ -3,7 +3,9 @@ import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import { io } from 'socket.io-client';
 import CustomAudioPlayer from '../components/CustomAudioPlayer';
-import TicTacToe from '../components/TicTacToe';
+import ChatTicTacToe from '../components/ChatTicTacToe';
+import ChatLudo from '../components/ChatLudo';
+import LudoInvite from '../components/LudoInvite';
 import { Share,  Mic, Square, Trash2,  
   Search, 
   Send, 
@@ -46,14 +48,12 @@ export default function Messages() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerIntervalRef = useRef(null);
+  const recordingStartTimeRef = useRef(null);
   
   // Message Context Menu (Long press)
   const [contextMenu, setContextMenu] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
   const longPressTimeoutRef = useRef(null);
-  
-  // Secret command states
-  const [showSecretGame, setShowSecretGame] = useState(false);
 
   // Real-time socket states
   const [socket, setSocket] = useState(null);
@@ -173,8 +173,12 @@ export default function Messages() {
     
     newSocket.on('receive_message', (message) => {
       setMessages(prev => {
-        // Prevent duplicate messages in view
-        if (prev.find(m => m._id === message._id)) return prev;
+        const index = prev.findIndex(m => m._id === message._id);
+        if (index !== -1) {
+          const newMessages = [...prev];
+          newMessages[index] = message;
+          return newMessages;
+        }
         
         // If viewing the broadcast channel
         if (message.isBroadcast && isBroadcast) {
@@ -185,7 +189,7 @@ export default function Messages() {
         if (!message.isBroadcast && selectedPartner && 
            (message.sender === selectedPartner._id || message.sender._id === selectedPartner._id || 
             message.receiver === selectedPartner._id || message.receiver._id === selectedPartner._id)) {
-           
+            
            // If we are currently chatting with them, we can instantly mark it read in the DB
            if (message.sender === selectedPartner._id || message.sender._id === selectedPartner._id) {
              api.put(`/messages/${selectedPartner._id}/read`).catch(console.error);
@@ -362,10 +366,98 @@ export default function Messages() {
     const textToSend = customText !== null ? customText : newMessage;
     if ((!textToSend.trim() && !mediaPreview) || (!selectedPartner && !isBroadcast)) return;
 
-    if (textToSend.trim().toLowerCase() === '/game') {
-      setShowSecretGame(true);
-      if (customText === null) {
-        setNewMessage('');
+    if (textToSend.trim().toLowerCase() === '/game' && !isBroadcast && selectedPartner) {
+      const initialGameState = {
+        type: 'tictactoe',
+        board: Array(9).fill(null),
+        isXNext: true,
+        playerX: user._id,
+        playerXName: user.name,
+        playerO: selectedPartner._id,
+        playerOName: selectedPartner.name,
+        winner: null,
+        winningLine: [],
+        scores: { playerX: 0, playerO: 0, ties: 0 },
+        gameEnded: false
+      };
+
+      setSending(true);
+      try {
+        if (socket && selectedPartner) {
+          socket.emit('stop_typing', { senderId: user._id, receiverId: selectedPartner._id });
+        }
+        const res = await api.post('/messages', {
+          receiver: selectedPartner._id,
+          text: JSON.stringify(initialGameState),
+          isBroadcast: false
+        });
+        
+        if (socket) {
+          socket.emit('send_message', res.data);
+        }
+        
+        if (customText === null) {
+          setNewMessage('');
+        }
+        removeMedia();
+        setMessages(prev => [...prev, res.data]);
+        refreshThreadPreviews();
+      } catch (err) {
+        console.error('Failed to send game', err);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    if (textToSend.trim().toLowerCase() === '/ludo' && !isBroadcast && selectedPartner) {
+      const initialGameState = {
+        type: 'ludo',
+        status: 'lobby',
+        hostId: user._id,
+        hostName: user.name,
+        players: [
+          { id: user._id, name: user.name, color: 'red', isAi: false }
+        ],
+        tokens: {
+          red: [-1, -1, -1, -1],
+          green: [-1, -1, -1, -1],
+          yellow: [-1, -1, -1, -1],
+          blue: [-1, -1, -1, -1]
+        },
+        currentTurn: 'red',
+        currentRoll: null,
+        hasRolled: false,
+        consecutiveSixes: 0,
+        winner: null,
+        gameEnded: false
+      };
+
+      setSending(true);
+      try {
+        if (socket && selectedPartner) {
+          socket.emit('stop_typing', { senderId: user._id, receiverId: selectedPartner._id });
+        }
+        const res = await api.post('/messages', {
+          receiver: selectedPartner._id,
+          text: JSON.stringify(initialGameState),
+          isBroadcast: false
+        });
+        
+        if (socket) {
+          socket.emit('send_message', res.data);
+        }
+        
+        if (customText === null) {
+          setNewMessage('');
+        }
+        removeMedia();
+        setMessages(prev => [...prev, res.data]);
+        refreshThreadPreviews();
+      } catch (err) {
+        console.error('Failed to send ludo', err);
+      } finally {
+        setSending(false);
       }
       return;
     }
@@ -399,6 +491,47 @@ export default function Messages() {
     }
   };
 
+  const handleGameUpdate = async (messageId, updatedGameState) => {
+    try {
+      const res = await api.put(`/messages/${messageId}`, {
+        text: JSON.stringify(updatedGameState)
+      });
+      
+      setMessages(prev => prev.map(m => m._id === messageId ? res.data : m));
+      
+      if (socket) {
+        socket.emit('send_message', res.data);
+      }
+    } catch (err) {
+      console.error('Failed to update game state', err);
+    }
+  };
+
+  const handleJoinLudoSuccess = (updatedGameMessageOrState) => {
+    if (socket) {
+      socket.emit('send_message', updatedGameMessageOrState);
+    }
+    
+    try {
+      const stateObj = typeof updatedGameMessageOrState.text === 'string'
+        ? JSON.parse(updatedGameMessageOrState.text)
+        : updatedGameMessageOrState;
+        
+      const hostId = stateObj.hostId;
+      if (hostId && hostId !== user._id) {
+        const foundPartner = partners.find(p => p._id === hostId);
+        if (foundPartner && (!selectedPartner || selectedPartner._id !== hostId)) {
+          setSelectedPartner(foundPartner);
+          setIsBroadcast(false);
+        }
+      }
+    } catch (e) {
+      console.warn('Could not automatically navigate to game thread:', e);
+    }
+
+    fetchMessages();
+  };
+
   const toggleChatEnabled = async () => {
     try {
       const res = await api.put('/messages/settings/status', { chatEnabled: !chatEnabled });
@@ -413,17 +546,19 @@ export default function Messages() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
       audioChunksRef.current = [];
+      recordingStartTimeRef.current = Date.now();
       
       mediaRecorderRef.current.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
       
       mediaRecorderRef.current.onstop = () => {
+        const durationSeconds = Math.round((Date.now() - recordingStartTimeRef.current) / 1000) || 1;
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = () => {
-          setMediaPreview(reader.result);
+          setMediaPreview(`${reader.result}#duration=${durationSeconds}`);
         };
         stream.getTracks().forEach(t => t.stop());
       };
@@ -780,6 +915,9 @@ export default function Messages() {
               ) : (
                 messages.map((msg, idx) => {
                   const isMine = msg.sender?._id === user._id || msg.sender === user._id;
+                  const isGame = msg.text && msg.text.startsWith('{"type":"tictactoe"');
+                  const isLudoGame = msg.text && msg.text.startsWith('{"type":"ludo"');
+                  const isLudoInvite = msg.text && msg.text.startsWith('{"type":"ludo_invite"');
                   return (
                     <motion.div
                       initial={{ opacity: 0, y: 12 }}
@@ -789,7 +927,7 @@ export default function Messages() {
                       className={`flex flex-col max-w-[70%] ${isMine ? 'self-end items-end' : 'self-start items-start'}`}
                     >
                       <div 
-                        className={`px-4 py-2.5 rounded-2xl relative group cursor-pointer ${
+                        className={isGame || isLudoGame || isLudoInvite ? "relative group cursor-pointer" : `px-4 py-2.5 rounded-2xl relative group cursor-pointer ${
                           isMine 
                             ? (isBroadcast ? 'bg-rose-600 text-white rounded-br-sm' : 'bg-indigo-600 text-slate-100 rounded-br-sm') 
                             : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/50'
@@ -837,9 +975,17 @@ export default function Messages() {
                         )}
 
                         {msg.text && (
-                          <p className="text-xs whitespace-pre-wrap leading-relaxed">
-                            {msg.text}
-                          </p>
+                          isGame ? (
+                            <ChatTicTacToe message={msg} currentUser={user} onUpdate={handleGameUpdate} />
+                          ) : isLudoGame ? (
+                            <ChatLudo message={msg} currentUser={user} onUpdate={handleGameUpdate} />
+                          ) : isLudoInvite ? (
+                            <LudoInvite message={msg} currentUser={user} onJoinSuccess={handleJoinLudoSuccess} />
+                          ) : (
+                            <p className="text-xs whitespace-pre-wrap leading-relaxed">
+                              {msg.text}
+                            </p>
+                          )
                         )}
                       </div>
                       
@@ -1119,10 +1265,6 @@ export default function Messages() {
               </div>
             </motion.div>
           </motion.div>
-        )}
-
-        {showSecretGame && (
-          <TicTacToe onClose={() => setShowSecretGame(false)} />
         )}
       </AnimatePresence>
     </div>

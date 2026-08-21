@@ -7,7 +7,59 @@ export default function CustomAudioPlayer({ src, isMine }) {
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
+  const [objectUrl, setObjectUrl] = useState('');
 
+  // 1. Extract and set duration from hash parameter immediately if present
+  useEffect(() => {
+    if (src && src.includes('#duration=')) {
+      const parts = src.split('#duration=');
+      const parsedDuration = parseFloat(parts[1]);
+      if (!isNaN(parsedDuration) && isFinite(parsedDuration)) {
+        setDuration(parsedDuration);
+      }
+    }
+  }, [src]);
+
+  // 2. Convert base64 source into a Blob URL to allow seeking, metadata loading, and native playback
+  useEffect(() => {
+    if (!src) return;
+    
+    let activeUrl = src;
+    let revokeUrl = null;
+
+    if (src.startsWith('data:')) {
+      try {
+        const base64Data = src.split('#')[0];
+        const arr = base64Data.split(',');
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'audio/webm';
+        
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        
+        const blob = new Blob([u8arr], { type: mime });
+        const localUrl = URL.createObjectURL(blob);
+        activeUrl = localUrl;
+        revokeUrl = localUrl;
+      } catch (err) {
+        console.error('Failed to convert base64 audio to object URL:', err);
+      }
+    }
+
+    setObjectUrl(activeUrl);
+
+    return () => {
+      if (revokeUrl) {
+        URL.revokeObjectURL(revokeUrl);
+      }
+    };
+  }, [src]);
+
+  // 3. Audio tag event listeners and lifecycle tracking
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -18,6 +70,12 @@ export default function CustomAudioPlayer({ src, isMine }) {
     const handleLoadedMetadata = () => {
       if (audio.duration && isFinite(audio.duration)) {
         setDuration(audio.duration);
+      } else if (src && src.includes('#duration=')) {
+        const parts = src.split('#duration=');
+        const parsedDuration = parseFloat(parts[1]);
+        if (!isNaN(parsedDuration) && isFinite(parsedDuration)) {
+          setDuration(parsedDuration);
+        }
       }
     };
     const handleEnded = () => {
@@ -34,6 +92,12 @@ export default function CustomAudioPlayer({ src, isMine }) {
     // Initial check in case it's already loaded
     if (audio.duration && isFinite(audio.duration)) {
       setDuration(audio.duration);
+    } else if (src && src.includes('#duration=')) {
+      const parts = src.split('#duration=');
+      const parsedDuration = parseFloat(parts[1]);
+      if (!isNaN(parsedDuration) && isFinite(parsedDuration)) {
+        setDuration(parsedDuration);
+      }
     }
 
     return () => {
@@ -43,7 +107,7 @@ export default function CustomAudioPlayer({ src, isMine }) {
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
     };
-  }, [src]);
+  }, [objectUrl, src]);
 
   const togglePlay = (e) => {
     e.stopPropagation();
@@ -92,7 +156,7 @@ export default function CustomAudioPlayer({ src, isMine }) {
       }`}
       onClick={(e) => e.stopPropagation()}
     >
-      <audio ref={audioRef} src={src} preload="metadata" />
+      <audio ref={audioRef} src={objectUrl} preload="metadata" />
 
       {/* Play/Pause Button */}
       <button
