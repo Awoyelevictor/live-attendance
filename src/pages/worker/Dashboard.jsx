@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   MapPin, Clock, Calendar, CheckCircle, AlertCircle, Loader2, 
   Camera, ArrowRight, Flame, Trophy, Zap, Sparkles, Award, 
-  TrendingUp, Shield, ChevronRight, HelpCircle, Star, ArrowUpRight
+  TrendingUp, Shield, ChevronRight, HelpCircle, Star, ArrowUpRight,
+  Upload, Check
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -15,7 +16,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function WorkerDashboard() {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [checkingIn, setCheckingIn] = useState(false);
@@ -28,6 +29,13 @@ export default function WorkerDashboard() {
   const [nearestLocationDist, setNearestLocationDist] = useState(null);
   const [nearestLocationName, setNearestLocationName] = useState('');
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'leaderboard'
+
+  // Inline avatar setup states
+  const [capturedAvatar, setCapturedAvatar] = useState('');
+  const [showDashboardCamera, setShowDashboardCamera] = useState(false);
+  const [savingAvatar, setSavingAvatar] = useState(false);
+  const dashboardVideoRef = useRef(null);
+  const dashboardFileRef = useRef(null);
 
   const weeklyTrendData = useMemo(() => {
     if (!data?.recent) return [];
@@ -231,12 +239,7 @@ export default function WorkerDashboard() {
     }
   };
 
-  const handleCheckIn = () => {
-    if (!user?.avatar) {
-      setShowAvatarPrompt(true);
-      return;
-    }
-
+  const performCheckIn = () => {
     if (!navigator.geolocation) {
       return setMessage({ text: 'Geolocation is not supported by your browser', type: 'error' });
     }
@@ -289,6 +292,88 @@ export default function WorkerDashboard() {
         setCheckingIn(false);
       }
     );
+  };
+
+  const handleCheckIn = () => {
+    if (!user?.avatar) {
+      setShowAvatarPrompt(true);
+      return;
+    }
+    performCheckIn();
+  };
+
+  // Inline Webcam & File Upload Handlers for prompt
+  const startDashboardCamera = async () => {
+    setShowDashboardCamera(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (dashboardVideoRef.current) {
+        dashboardVideoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.warn('Unable to access camera: ' + err.message);
+      setShowDashboardCamera(false);
+    }
+  };
+
+  const captureDashboardPhoto = () => {
+    if (dashboardVideoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 300;
+      canvas.height = 300;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(dashboardVideoRef.current, 0, 0, 300, 300);
+      const dataUrl = canvas.toDataURL('image/jpeg');
+      setCapturedAvatar(dataUrl);
+
+      // Stop camera stream
+      const stream = dashboardVideoRef.current.srcObject;
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      setShowDashboardCamera(false);
+    }
+  };
+
+  const closeDashboardCamera = () => {
+    if (dashboardVideoRef.current && dashboardVideoRef.current.srcObject) {
+      const stream = dashboardVideoRef.current.srcObject;
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setShowDashboardCamera(false);
+  };
+
+  const handleDashboardFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 3 * 1024 * 1024) {
+        alert('Image size should be less than 3MB');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCapturedAvatar(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const submitAvatarAndCheckIn = async () => {
+    if (!capturedAvatar) return;
+    setSavingAvatar(true);
+    try {
+      const res = await api.put('/worker/profile', {
+        avatar: capturedAvatar
+      });
+      updateUser(res.data);
+      setShowAvatarPrompt(false);
+      // Automatically continue with check-in since they now have a valid profile pic!
+      performCheckIn();
+    } catch (err) {
+      console.error('Failed to save avatar directly from check-in:', err);
+    } finally {
+      setSavingAvatar(false);
+    }
   };
 
   const handleCheckOut = () => {
@@ -889,33 +974,124 @@ export default function WorkerDashboard() {
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}
-              className="bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl max-w-md w-full text-center space-y-6 shadow-2xl"
+              className="bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl max-w-md w-full text-center space-y-5 shadow-2xl"
             >
-              <div className="w-16 h-16 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto">
-                <Camera size={32} />
+              <div className="w-12 h-12 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto">
+                <Camera size={24} />
               </div>
 
               <div className="space-y-2">
-                <h3 className="text-xl font-bold text-white">Profile Picture Required</h3>
-                <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
-                  To ensure workplace compliance and biometric identity verification, setting a profile picture is <strong className="text-amber-400">required</strong> before checking in.
+                <h3 className="text-lg font-bold text-white">Biometric Identity Verification</h3>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  To ensure workplace compliance and accurate identity records, setting a profile picture is <strong className="text-amber-400 font-semibold">required</strong> before you can check in.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+              {/* Live Video / Captured Image Box */}
+              <div className="relative w-48 h-48 mx-auto rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 flex items-center justify-center shadow-inner group">
+                {showDashboardCamera ? (
+                  <video 
+                    ref={dashboardVideoRef} 
+                    autoPlay 
+                    playsInline 
+                    className="w-full h-full object-cover scale-x-[-1]"
+                  />
+                ) : capturedAvatar ? (
+                  <img 
+                    src={capturedAvatar} 
+                    alt="Captured Bio" 
+                    className="w-full h-full object-cover" 
+                  />
+                ) : (
+                  <div className="text-slate-600 text-xs flex flex-col items-center gap-1.5 p-4 text-center">
+                    <span className="font-semibold block text-slate-500">No Image Prepared</span>
+                    <span>Use webcam or choose a local photo file below</span>
+                  </div>
+                )}
+                {showDashboardCamera && (
+                  <div className="absolute bottom-2 inset-x-2 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={captureDashboardPhoto}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-[10px] uppercase shadow-md transition-all active:scale-95 cursor-pointer"
+                    >
+                      Capture Photo
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Source Buttons */}
+              <div className="flex justify-center gap-3">
+                {!showDashboardCamera && (
+                  <button
+                    type="button"
+                    onClick={startDashboardCamera}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Camera size={14} />
+                    {capturedAvatar ? 'Retake Photo' : 'Webcam'}
+                  </button>
+                )}
+                {showDashboardCamera && (
+                  <button
+                    type="button"
+                    onClick={closeDashboardCamera}
+                    className="px-4 py-2 bg-rose-950/40 text-rose-400 hover:bg-rose-900/40 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    Stop Camera
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => setShowAvatarPrompt(false)}
-                  className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition-all"
+                  onClick={() => dashboardFileRef.current?.click()}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Upload size={14} />
+                  Choose File
+                </button>
+                <input 
+                  type="file"
+                  ref={dashboardFileRef}
+                  onChange={handleDashboardFileUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeDashboardCamera();
+                    setShowAvatarPrompt(false);
+                  }}
+                  className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition-all cursor-pointer"
                 >
                   Cancel
                 </button>
-                <Link
-                  to="/worker/profile"
-                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30"
-                >
-                  Upload Picture Now <ArrowRight size={14} />
-                </Link>
+                {capturedAvatar ? (
+                  <button
+                    type="button"
+                    onClick={submitAvatarAndCheckIn}
+                    disabled={savingAvatar}
+                    className="w-full py-3 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 disabled:from-slate-800 disabled:to-slate-800 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 cursor-pointer"
+                  >
+                    {savingAvatar ? <Loader2 className="animate-spin" size={14} /> : <Check size={14} />}
+                    {savingAvatar ? 'Saving Image...' : 'Verify & Check-In'}
+                  </button>
+                ) : (
+                  <Link
+                    to="/worker/profile"
+                    onClick={() => {
+                      closeDashboardCamera();
+                      setShowAvatarPrompt(false);
+                    }}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/30"
+                  >
+                    Go to Profile <ArrowRight size={14} />
+                  </Link>
+                )}
               </div>
             </motion.div>
           </motion.div>

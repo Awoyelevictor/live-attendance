@@ -6,6 +6,7 @@ import CustomAudioPlayer from '../components/CustomAudioPlayer';
 import ChatTicTacToe from '../components/ChatTicTacToe';
 import ChatLudo from '../components/ChatLudo';
 import LudoInvite from '../components/LudoInvite';
+import ChatChess from '../components/ChatChess';
 import { Share,  Mic, Square, Trash2,  
   Search, 
   Send, 
@@ -404,6 +405,59 @@ export default function Messages() {
         refreshThreadPreviews();
       } catch (err) {
         console.error('Failed to send game', err);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    if (textToSend.trim().toLowerCase() === '/chess' && !isBroadcast && selectedPartner) {
+      const initialGameState = {
+        type: 'chess',
+        board: [
+          ['br', 'bn', 'bb', 'bq', 'bk', 'bb', 'bn', 'br'],
+          ['bp', 'bp', 'bp', 'bp', 'bp', 'bp', 'bp', 'bp'],
+          [null, null, null, null, null, null, null, null],
+          [null, null, null, null, null, null, null, null],
+          [null, null, null, null, null, null, null, null],
+          [null, null, null, null, null, null, null, null],
+          ['wp', 'wp', 'wp', 'wp', 'wp', 'wp', 'wp', 'wp'],
+          ['wr', 'wn', 'wb', 'wq', 'wk', 'wb', 'wn', 'wr']
+        ],
+        turn: 'w',
+        playerWhite: user._id,
+        playerWhiteName: user.name,
+        playerBlack: selectedPartner._id,
+        playerBlackName: selectedPartner.name,
+        winner: null,
+        isAi: false,
+        gameEnded: false,
+        history: ['Chess Match Initialized!']
+      };
+
+      setSending(true);
+      try {
+        if (socket && selectedPartner) {
+          socket.emit('stop_typing', { senderId: user._id, receiverId: selectedPartner._id });
+        }
+        const res = await api.post('/messages', {
+          receiver: selectedPartner._id,
+          text: JSON.stringify(initialGameState),
+          isBroadcast: false
+        });
+        
+        if (socket) {
+          socket.emit('send_message', res.data);
+        }
+        
+        if (customText === null) {
+          setNewMessage('');
+        }
+        removeMedia();
+        setMessages(prev => [...prev, res.data]);
+        refreshThreadPreviews();
+      } catch (err) {
+        console.error('Failed to send chess', err);
       } finally {
         setSending(false);
       }
@@ -918,6 +972,7 @@ export default function Messages() {
                   const isGame = msg.text && msg.text.startsWith('{"type":"tictactoe"');
                   const isLudoGame = msg.text && msg.text.startsWith('{"type":"ludo"');
                   const isLudoInvite = msg.text && msg.text.startsWith('{"type":"ludo_invite"');
+                  const isChessGame = msg.text && msg.text.startsWith('{"type":"chess"');
                   return (
                     <motion.div
                       initial={{ opacity: 0, y: 12 }}
@@ -927,7 +982,7 @@ export default function Messages() {
                       className={`flex flex-col max-w-[70%] ${isMine ? 'self-end items-end' : 'self-start items-start'}`}
                     >
                       <div 
-                        className={isGame || isLudoGame || isLudoInvite ? "relative group cursor-pointer" : `px-4 py-2.5 rounded-2xl relative group cursor-pointer ${
+                        className={isGame || isLudoGame || isLudoInvite || isChessGame ? "relative group cursor-pointer" : `px-4 py-2.5 rounded-2xl relative group cursor-pointer ${
                           isMine 
                             ? (isBroadcast ? 'bg-rose-600 text-white rounded-br-sm' : 'bg-indigo-600 text-slate-100 rounded-br-sm') 
                             : 'bg-slate-800 text-slate-200 rounded-bl-sm border border-slate-700/50'
@@ -981,6 +1036,8 @@ export default function Messages() {
                             <ChatLudo message={msg} currentUser={user} onUpdate={handleGameUpdate} />
                           ) : isLudoInvite ? (
                             <LudoInvite message={msg} currentUser={user} onJoinSuccess={handleJoinLudoSuccess} />
+                          ) : isChessGame ? (
+                            <ChatChess message={msg} currentUser={user} onUpdate={handleGameUpdate} />
                           ) : (
                             <p className="text-xs whitespace-pre-wrap leading-relaxed">
                               {msg.text}

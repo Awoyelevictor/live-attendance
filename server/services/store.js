@@ -781,8 +781,8 @@ export const dbStore = {
       const msg = await Message.findById(messageId);
       if (!msg) return null;
       
-      const isGame = (msg.text && (msg.text.startsWith('{"type":"ludo"') || msg.text.startsWith('{"type":"tictactoe"') || msg.text.startsWith('{"type":"ludo_invite"'))) ||
-                     (data.text && (data.text.startsWith('{"type":"ludo"') || data.text.startsWith('{"type":"tictactoe"') || data.text.startsWith('{"type":"ludo_invite"')));
+      const isGame = (msg.text && (msg.text.startsWith('{"type":"ludo"') || msg.text.startsWith('{"type":"chess"') || msg.text.startsWith('{"type":"tictactoe"') || msg.text.startsWith('{"type":"ludo_invite"'))) ||
+                     (data.text && (data.text.startsWith('{"type":"ludo"') || data.text.startsWith('{"type":"chess"') || data.text.startsWith('{"type":"tictactoe"') || data.text.startsWith('{"type":"ludo_invite"')));
 
       const isSender = msg.sender.toString() === userId.toString();
       const isReceiver = msg.receiver && msg.receiver.toString() === userId.toString();
@@ -797,8 +797,8 @@ export const dbStore = {
     if (idx === -1) return null;
     const msg = inMemoryMessages[idx];
     
-    const isGame = (msg.text && (msg.text.startsWith('{"type":"ludo"') || msg.text.startsWith('{"type":"tictactoe"') || msg.text.startsWith('{"type":"ludo_invite"'))) ||
-                   (data.text && (data.text.startsWith('{"type":"ludo"') || data.text.startsWith('{"type":"tictactoe"') || data.text.startsWith('{"type":"ludo_invite"')));
+    const isGame = (msg.text && (msg.text.startsWith('{"type":"ludo"') || msg.text.startsWith('{"type":"chess"') || msg.text.startsWith('{"type":"tictactoe"') || msg.text.startsWith('{"type":"ludo_invite"'))) ||
+                   (data.text && (data.text.startsWith('{"type":"ludo"') || data.text.startsWith('{"type":"chess"') || data.text.startsWith('{"type":"tictactoe"') || data.text.startsWith('{"type":"ludo_invite"')));
 
     const isSender = msg.sender === userId;
     const isReceiver = msg.receiver === userId;
