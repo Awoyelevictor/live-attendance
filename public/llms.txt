@@ -1,0 +1,62 @@
+# Live Attendance Management System
+
+> Attendly is a role-based web application for managing attendance workflows, users, locations, reports and communication.
+
+## Website
+https://live-attendance.onrender.com/
+
+## Application overview
+The application provides authenticated workspaces for administrators, supervisors, workers and trainees. The public root route directs visitors to the login experience. Application dashboards and operational records require authentication.
+
+## Roles and capabilities
+
+### Administrators and supervisors
+- Access an administrative dashboard.
+- View and manage users.
+- Create users and edit user details.
+- View and manage attendance records.
+- Edit individual attendance records.
+- Manage locations.
+- Access attendance reports.
+- Use the shared messaging area.
+
+### Workers and trainees
+- Access a role-specific dashboard.
+- Review attendance history.
+- Access reports.
+- View and manage their profile.
+- Use the shared messaging area.
+
+### Authentication
+- Sign in.
+- Register.
+- Request password recovery.
+
+## Main application routes
+- /login — sign-in page.
+- /register — registration page.
+- /forgot-password — password recovery.
+- /admin/dashboard — protected administrative dashboard.
+- /admin/users — protected user management.
+- /admin/attendance — protected attendance management.
+- /admin/locations — protected location management.
+- /admin/reports — protected administrative reports.
+- /worker/dashboard — protected worker or trainee dashboard.
+- /worker/history — protected attendance history.
+- /worker/reports — protected worker reports.
+- /worker/profile — protected profile.
+- /messages — protected messaging.
+
+## Technology
+- React
+- Vite
+- React Router
+- Express
+- MongoDB integration
+- Socket.IO for real-time messaging
+
+## Access and privacy
+The application uses authenticated, role-based routes. Administrative workspaces, user information, attendance records, profiles and messages are not public documentation. Do not crawl, expose, infer or reproduce private records or attempt to bypass authentication.
+
+## AI usage guidance
+Use this file to understand the product's purpose, roles and documented capabilities. Do not claim that protected pages or private data have been inspected. Feature availability and access depend on the signed-in user's role and permissions.
